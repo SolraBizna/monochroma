@@ -1,3 +1,13 @@
+# What
+
+monochroma is a Rust library for doing bitmapped graphics on a modern system. It basically emulates a 1-bit framebuffer.
+
+# Why
+
+Because I don't like any word processor that's younger than I am.
+
+# Legalese
+
 monochroma is copyright 2023, Solra Bizna, and licensed under either of:
 
  * Apache License, Version 2.0
