@@ -63,10 +63,13 @@ fn main() {
             }),
         );
     }
-    let _ = bits.write_ascii_pbm(
-        std::io::stdout(),
-        "Output of \"show_font\" example program for Monochroma",
-    );
+    #[cfg(feature = "netpbm")]
+    {
+        let _ = bits.write_ascii_pbm(
+            std::io::stdout(),
+            "Output of \"show_font\" example program for Monochroma",
+        );
+    }
     for event in event_pump.wait_iter() {
         use sdl2::event::Event;
         match event {
