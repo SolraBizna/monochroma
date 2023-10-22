@@ -5,7 +5,7 @@ fn main() {
     let video = sdl.video().unwrap();
     let mut event_pump = sdl.event_pump().unwrap();
     let bits: Bitmap =
-        Bitmap::read_netpbm(std::io::stdin()).expect("Couldn't load bitmap.");
+        Bitmap::read_netpbm(std::io::stdin()).expect("Couldn't load bitmap");
     let mut display = Display::new(&video, || {
         let mut ret = video.window(
             "Bitmap Display",

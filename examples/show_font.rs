@@ -10,7 +10,8 @@ fn main() {
             std::process::exit(1)
         }
     };
-    let plain = Font::read_mac_font(std::io::stdin()).unwrap();
+    let plain =
+        Font::read_mac_font(std::io::stdin()).expect("Couldn't load font");
     let height = (16
         + (plain.get_ascent() + plain.get_descent() + plain.get_leading()) * 8)
         as u32;

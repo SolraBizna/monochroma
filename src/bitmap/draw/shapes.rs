@@ -23,33 +23,33 @@ impl Bitmap {
         let bottom = rectangle.bottom as u32;
         let (start_word, stop_word, left_mask, right_mask) =
             calculate_span_mask(left, right);
-        let mut i = (start_word + top * self.pitch_words) as usize;
+        let mut i = (start_word + top * self.words_per_row) as usize;
         if start_word == stop_word {
             let combined_mask = left_mask & right_mask;
             for y in top..bottom {
-                self.bits[i] = self.bits[i] & !combined_mask
+                self.words[i] = self.words[i] & !combined_mask
                     | (mode.combine(
                         combined_mask,
-                        self.bits[i],
+                        self.words[i],
                         start_word,
                         y,
                     ) & combined_mask);
-                i += self.pitch_words as usize;
+                i += self.words_per_row as usize;
             }
         } else {
             let stride =
-                (self.pitch_words - (stop_word - start_word)) as usize;
+                (self.words_per_row - (stop_word - start_word)) as usize;
             for y in top..bottom {
-                self.bits[i] = self.bits[i] & !left_mask
-                    | (mode.combine(left_mask, self.bits[i], start_word, y)
+                self.words[i] = self.words[i] & !left_mask
+                    | (mode.combine(left_mask, self.words[i], start_word, y)
                         & left_mask);
                 i += 1;
                 for x in start_word + 1..stop_word {
-                    self.bits[i] = mode.combine(!0, self.bits[i], x, y);
+                    self.words[i] = mode.combine(!0, self.words[i], x, y);
                     i += 1;
                 }
-                self.bits[i] = self.bits[i] & !right_mask
-                    | (mode.combine(right_mask, self.bits[i], stop_word, y)
+                self.words[i] = self.words[i] & !right_mask
+                    | (mode.combine(right_mask, self.words[i], stop_word, y)
                         & right_mask);
                 i += stride;
             }

@@ -68,7 +68,7 @@ impl Bitmap {
         let (in_start_word, in_stop_word, _, _) =
             calculate_span_mask(src_left, src_right);
         let in_word_count = (in_stop_word + 1) - in_start_word;
-        let i = in_start_word + src_top * src.pitch_words;
+        let i = in_start_word + src_top * src.words_per_row;
         let src_bit_align = src_left % BITMAP_WORD_BITS as u32;
         let dst_bit_align = dst_left % BITMAP_WORD_BITS as u32;
         match src_bit_align.cmp(&dst_bit_align) {
@@ -77,10 +77,10 @@ impl Bitmap {
                 let slip = dst_bit_align - src_bit_align;
                 inner_blit(
                     mode,
-                    (i..(i + src_rect.get_height() * src.pitch_words))
-                        .step_by(src.pitch_words as usize)
+                    (i..(i + src_rect.get_height() * src.words_per_row))
+                        .step_by(src.words_per_row as usize)
                         .map(|offset| {
-                            let words = &src.bits[offset as usize
+                            let words = &src.words[offset as usize
                                 ..(offset + in_word_count) as usize];
                             Biterator::new(words, slip, 0)
                         }),
@@ -95,10 +95,10 @@ impl Bitmap {
                 // No shifting required
                 inner_blit(
                     mode,
-                    (i..(i + src_rect.get_height() * src.pitch_words))
-                        .step_by(src.pitch_words as usize)
+                    (i..(i + src_rect.get_height() * src.words_per_row))
+                        .step_by(src.words_per_row as usize)
                         .map(|offset| {
-                            src.bits[offset as usize
+                            src.words[offset as usize
                                 ..(offset + in_word_count) as usize]
                                 .iter()
                                 .copied()
@@ -115,10 +115,10 @@ impl Bitmap {
                 let slip = src_bit_align - dst_bit_align;
                 inner_blit(
                     mode,
-                    (i..(i + src_rect.get_height() * src.pitch_words))
-                        .step_by(src.pitch_words as usize)
+                    (i..(i + src_rect.get_height() * src.words_per_row))
+                        .step_by(src.words_per_row as usize)
                         .map(|offset| {
-                            let words = &src.bits[offset as usize
+                            let words = &src.words[offset as usize
                                 ..(offset + in_word_count) as usize];
                             Biterator::new(words, 0, slip)
                         }),
@@ -144,42 +144,42 @@ fn inner_blit<Mode: TransferMode>(
 ) {
     let (out_start_word, out_stop_word, left_mask, right_mask) =
         calculate_span_mask(dst_left, dst_right);
-    let mut i = (out_start_word + dst_top * dst.pitch_words) as usize;
+    let mut i = (out_start_word + dst_top * dst.words_per_row) as usize;
     if out_start_word == out_stop_word {
         let combined_mask = left_mask & right_mask;
         for y in dst_top..dst_bottom {
             let mut src_row = src_rows.next().unwrap();
-            dst.bits[i] = dst.bits[i] & !combined_mask
+            dst.words[i] = dst.words[i] & !combined_mask
                 | (mode.combine(
                     src_row.next().unwrap(),
-                    dst.bits[i],
+                    dst.words[i],
                     out_start_word,
                     y,
                 ) & combined_mask);
-            i += dst.pitch_words as usize;
+            i += dst.words_per_row as usize;
         }
     } else {
         let out_stride =
-            (dst.pitch_words - (out_stop_word - out_start_word)) as usize;
+            (dst.words_per_row - (out_stop_word - out_start_word)) as usize;
         for y in dst_top..dst_bottom {
             let mut src_row = src_rows.next().unwrap();
-            dst.bits[i] = dst.bits[i] & !left_mask
+            dst.words[i] = dst.words[i] & !left_mask
                 | (mode.combine(
                     src_row.next().unwrap(),
-                    dst.bits[i],
+                    dst.words[i],
                     out_start_word,
                     y,
                 ) & left_mask);
             i += 1;
             for x in out_start_word + 1..out_stop_word {
-                dst.bits[i] =
-                    mode.combine(src_row.next().unwrap(), dst.bits[i], x, y);
+                dst.words[i] =
+                    mode.combine(src_row.next().unwrap(), dst.words[i], x, y);
                 i += 1;
             }
-            dst.bits[i] = dst.bits[i] & !right_mask
+            dst.words[i] = dst.words[i] & !right_mask
                 | (mode.combine(
                     src_row.next().unwrap(),
-                    dst.bits[i],
+                    dst.words[i],
                     out_stop_word,
                     y,
                 ) & right_mask);

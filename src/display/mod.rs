@@ -220,12 +220,12 @@ impl Display {
                 GL_TEXTURE_2D,
                 0,
                 GL_R32UI as GLint,
-                bits.pitch_words as GLint,
+                bits.words_per_row as GLint,
                 bits.height as GLint,
                 0,
                 GL_RED_INTEGER,
                 GL_UNSIGNED_INT,
-                &bits.bits[0] as *const BitmapWord as *const GLvoid,
+                &bits.words[0] as *const BitmapWord as *const GLvoid,
             );
             assertgl(&self.gl, "uploading texture");
             self.gl.BufferData(

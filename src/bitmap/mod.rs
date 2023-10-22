@@ -35,19 +35,19 @@ pub const fn get_word_pitch(width: u32) -> u32 {
 pub struct Bitmap {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) pitch_words: u32,
-    pub(crate) bits: Vec<BitmapWord>,
+    pub(crate) words_per_row: u32,
+    pub(crate) words: Vec<BitmapWord>,
 }
 
 impl Bitmap {
     /// Create a new blank bitmap of the given dimensions.
     pub fn new(width: u32, height: u32) -> Bitmap {
-        let pitch_words = get_word_pitch(width);
+        let words_per_row = get_word_pitch(width);
         Bitmap {
             width,
             height,
-            pitch_words,
-            bits: vec![0; (pitch_words * height) as usize],
+            words_per_row,
+            words: vec![0; (words_per_row * height) as usize],
         }
     }
     /// Create a new bitmap initialized with the given pixels. One byte = 8
@@ -57,8 +57,8 @@ impl Bitmap {
         if bytes.len() != (src_pitch as usize * height as usize) {
             panic!("Bitmap::from_bytes(): input slice not exactly the right number of bytes");
         }
-        let pitch_words = get_word_pitch(width);
-        let mut bits = Vec::with_capacity((pitch_words * height) as usize);
+        let words_per_row = get_word_pitch(width);
+        let mut bits = Vec::with_capacity((words_per_row * height) as usize);
         for row in bytes.chunks_exact(src_pitch as usize) {
             for group in row.chunks(BITMAP_WORD_BYTES) {
                 bits.push(u32::from_be_bytes([
@@ -72,8 +72,8 @@ impl Bitmap {
         Bitmap {
             width,
             height,
-            pitch_words,
-            bits,
+            words_per_row,
+            words: bits,
         }
     }
     /// Turn this bitmap into an array of byte pixels, most significant bit on
@@ -85,8 +85,8 @@ impl Bitmap {
         let out_rowbytes = ((self.width + 7) / 8) as usize;
         let mut ret = Vec::with_capacity(out_rowbytes * self.height as usize);
         for y in 0..self.height as usize {
-            let src_row = &self.bits[y * self.pitch_words as usize
-                ..(y + 1) * self.pitch_words as usize];
+            let src_row = &self.words[y * self.words_per_row as usize
+                ..(y + 1) * self.words_per_row as usize];
             for (i, word) in src_row.iter().enumerate() {
                 let in_x = i * BITMAP_WORD_BITS;
                 let in_bytes = word.to_be_bytes();

@@ -7,14 +7,13 @@ use super::*;
 fn peek(reader: &mut impl BufRead) -> anyhow::Result<u8> {
     let buf = reader.fill_buf()?;
     if buf.is_empty() {
-        Err(anyhow!("Unexpected end of file."))
+        Err(anyhow!("Unexpected end of file"))
     } else {
         Ok(buf[0])
     }
 }
 
-fn munch_whitespace(reader: &mut impl BufRead) -> anyhow::Result<()> {
-    munch_one_whitespace(reader)?;
+fn munch_optional_whitespace(reader: &mut impl BufRead) -> anyhow::Result<()> {
     loop {
         if munch_comment(reader)? {
             // om nom nom
@@ -27,13 +26,20 @@ fn munch_whitespace(reader: &mut impl BufRead) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn munch_mandatory_whitespace(
+    reader: &mut impl BufRead,
+) -> anyhow::Result<()> {
+    munch_one_whitespace(reader)?;
+    munch_optional_whitespace(reader)
+}
+
 fn munch_one_whitespace(reader: &mut impl BufRead) -> anyhow::Result<()> {
     while munch_comment(reader)? {}
     if peek(reader)?.is_ascii_whitespace() {
         reader.consume(1);
         Ok(())
     } else {
-        Err(anyhow!("Expected whitespace, found something else."))
+        Err(anyhow!("Expected whitespace, found something else"))
     }
 }
 
@@ -57,7 +63,7 @@ fn munch_comment(reader: &mut impl BufRead) -> anyhow::Result<bool> {
 fn munch_number(reader: &mut impl BufRead) -> anyhow::Result<u32> {
     let mut n = 0u32;
     if !peek(reader)?.is_ascii_digit() {
-        return Err(anyhow!("Number did not begin with an ASCII digit."));
+        return Err(anyhow!("Number did not begin with an ASCII digit"));
     }
     while let Ok(digit) = peek(reader) {
         if !digit.is_ascii_digit() {
@@ -66,7 +72,7 @@ fn munch_number(reader: &mut impl BufRead) -> anyhow::Result<u32> {
         n = n
             .checked_mul(10)
             .and_then(|n| n.checked_add((digit - b'0') as u32))
-            .ok_or_else(|| anyhow!("Arithmetic overflow."))?;
+            .ok_or_else(|| anyhow!("Arithmetic overflow"))?;
         reader.consume(1);
     }
     Ok(n)
@@ -113,12 +119,9 @@ impl Bitmap {
                 write!(
                     writer,
                     "{}",
-                    (self.bits[i] >> (31 ^ (x as usize % BITMAP_WORD_BITS)))
+                    (self.words[i] >> (31 ^ (x as usize % BITMAP_WORD_BITS)))
                         & 1
                 )?;
-                if x != self.width - 1 {
-                    write!(writer, " ")?;
-                }
                 if x as usize % BITMAP_WORD_BITS == (BITMAP_WORD_BITS) - 1 {
                     i += 1;
                 }
@@ -130,7 +133,12 @@ impl Bitmap {
         }
         Ok(())
     }
-    /// Load a new Bitmap from any netpbm format (pbm, pgm, ppm, or pam).
+    /// Load a new Bitmap from any netpbm format (pbm, pgm, ppm, NOT pam). For
+    /// non-bitmap input, the pixel is marked (1) if the *sum of all channels*
+    /// is strictly less than half of the maximum value it could possibly be.
+    /// If you have a mark-is-bright system, you will need to invert this
+    /// bitmap. This can be done efficiently by filling its bounds rectangle
+    /// with `ModeXor(())`.
     ///
     /// See: <https://netpbm.sourceforge.net/doc/index.html>
     pub fn read_netpbm(reader: impl Read) -> anyhow::Result<Bitmap> {
@@ -138,38 +146,173 @@ impl Bitmap {
         let mut kind = [0; 2];
         reader
             .read_exact(&mut kind)
-            .context("Couldn't read header.")?;
+            .context("Couldn't read header")?;
         if kind[0] != b'P' {
-            return Err(anyhow!("Input is not a netpbm image."));
+            return Err(anyhow!("Input is not a netpbm image"));
         }
         match kind[1] {
-            b'1' => todo!("P1"),
-            b'2' => todo!("P2"),
-            b'3' => todo!("P3"),
+            b'1' => read_p1(&mut reader),
+            b'2' => read_p2(&mut reader),
+            b'3' => read_p3(&mut reader),
             b'4' => read_p4(&mut reader),
-            b'5' => todo!("P5"),
-            b'6' => todo!("P6"),
-            b'7' => todo!("P7"),
-            _ => Err(anyhow!("Input is not a netpbm image.")),
+            b'5' => read_p5(&mut reader),
+            b'6' => read_p6(&mut reader),
+            b'7' => Err(anyhow!(
+                "Image is a PAM or an xv thumbnail; we don't support either"
+            )),
+            _ => Err(anyhow!("Input is not a netpbm image")),
         }
     }
 }
 
-fn read_p4(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
-    munch_whitespace(reader)?;
+macro_rules! read_pixels {
+    ($width:ident, $height:ident, $code:block) => {{
+        let words_per_row = get_word_pitch($width);
+        let mut words = Vec::with_capacity((words_per_row * $height) as usize);
+        for _ in 0..$height {
+            for _ in 0..($width - $width % BITMAP_WORD_BITS as u32)
+                / BITMAP_WORD_BITS as u32
+            {
+                let mut word = 0;
+                let mut bit = !0 ^ ((!0) >> 1);
+                for _ in 0..BITMAP_WORD_BITS {
+                    if $code {
+                        word |= bit
+                    }
+                    bit >>= 1;
+                }
+                words.push(word);
+            }
+            let mut word = 0;
+            let mut bit = !0 ^ ((!0) >> 1);
+            for _ in $width - $width % BITMAP_WORD_BITS as u32..$width {
+                if $code {
+                    word |= bit
+                }
+                bit >>= 1;
+            }
+            words.push(word);
+        }
+        (words_per_row, words)
+    }};
+}
+
+/// ASCII PBM
+fn read_p1(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
+    munch_mandatory_whitespace(reader)?;
     let width = munch_number(reader)?;
-    munch_whitespace(reader)?;
+    munch_mandatory_whitespace(reader)?;
     let height = munch_number(reader)?;
     munch_one_whitespace(reader)?;
-    let pitch_words = get_word_pitch(width);
-    let mut bits = Vec::with_capacity((pitch_words * height) as usize);
+    let (words_per_row, words) = read_pixels!(width, height, {
+        munch_optional_whitespace(reader)?;
+        match peek(reader)? {
+            b'0' => {
+                reader.consume(1);
+                false
+            }
+            b'1' => {
+                reader.consume(1);
+                true
+            }
+            _ => {
+                return Err(anyhow!(
+                "Unexpected non-comment, non-whitespace, non-zero-or-one byte"
+            ))
+            }
+        }
+    });
+    Ok(Bitmap {
+        width,
+        height,
+        words_per_row,
+        words,
+    })
+}
+
+/// ASCII PGM
+fn read_p2(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
+    munch_mandatory_whitespace(reader)?;
+    let width = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let height = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let maxval = munch_number(reader)?;
+    if maxval > 65535 {
+        return Err(anyhow!("maxval greater than 65535 specified"));
+    } else if maxval == 0 {
+        return Err(anyhow!("zero maxval specified"));
+    }
+    let halfie = (maxval + 1) / 2;
+    let (words_per_row, words) = read_pixels!(width, height, {
+        munch_mandatory_whitespace(reader)?;
+        let num = munch_number(reader)?;
+        if num > maxval {
+            return Err(anyhow!("pixel value exceeding maxval specified"));
+        } else {
+            num < halfie
+        }
+    });
+    Ok(Bitmap {
+        width,
+        height,
+        words_per_row,
+        words,
+    })
+}
+
+/// ASCII PPM
+fn read_p3(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
+    munch_mandatory_whitespace(reader)?;
+    let width = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let height = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let maxval = munch_number(reader)?;
+    if maxval > 65535 {
+        return Err(anyhow!("maxval greater than 65535 specified"));
+    } else if maxval == 0 {
+        return Err(anyhow!("zero maxval specified"));
+    }
+    let maxval = maxval * 3;
+    let halfie = (maxval + 1) / 2;
+    let (words_per_row, words) = read_pixels!(width, height, {
+        munch_mandatory_whitespace(reader)?;
+        let num = munch_number(reader)?
+            + munch_mandatory_whitespace(reader)
+                .and_then(|_| munch_number(reader))?
+            + munch_mandatory_whitespace(reader)
+                .and_then(|_| munch_number(reader))?;
+        if num > maxval {
+            return Err(anyhow!("pixel value exceeding maxval specified"));
+        } else {
+            num < halfie
+        }
+    });
+    Ok(Bitmap {
+        width,
+        height,
+        words_per_row,
+        words,
+    })
+}
+
+/// Binary PBM
+fn read_p4(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
+    munch_mandatory_whitespace(reader)?;
+    let width = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let height = munch_number(reader)?;
+    munch_one_whitespace(reader)?;
+    let words_per_row = get_word_pitch(width);
+    let mut words = Vec::with_capacity((words_per_row * height) as usize);
     let mut buf = vec![0; (width as usize + 7) / 8];
     for _ in 0..height {
         reader
             .read_exact(&mut buf[..])
             .context("Couldn't read bitmap bits")?;
         for chunk in buf.chunks(BITMAP_WORD_BYTES) {
-            bits.push(BitmapWord::from_be_bytes([
+            words.push(BitmapWord::from_be_bytes([
                 chunk.first().copied().unwrap_or(0),
                 chunk.get(1).copied().unwrap_or(0),
                 chunk.get(2).copied().unwrap_or(0),
@@ -180,7 +323,102 @@ fn read_p4(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
     Ok(Bitmap {
         width,
         height,
-        pitch_words,
-        bits,
+        words_per_row,
+        words,
+    })
+}
+
+/// Binary PGM
+fn read_p5(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
+    munch_mandatory_whitespace(reader)?;
+    let width = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let height = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let maxval = munch_number(reader)?;
+    munch_one_whitespace(reader)?;
+    if maxval > 65535 {
+        return Err(anyhow!("maxval greater than 65535 specified"));
+    } else if maxval == 0 {
+        return Err(anyhow!("zero maxval specified"));
+    }
+    let halfie = (maxval + 1) / 2;
+    let (words_per_row, words) = if maxval > 255 {
+        read_pixels!(width, height, {
+            let mut buf = [0; 2];
+            reader.read_exact(&mut buf)?;
+            let num = u16::from_be_bytes(buf) as u32;
+            if num > maxval {
+                return Err(anyhow!("pixel value exceeding maxval specified"));
+            } else {
+                num < halfie
+            }
+        })
+    } else {
+        read_pixels!(width, height, {
+            let mut buf = [0; 1];
+            reader.read_exact(&mut buf)?;
+            let num = buf[0] as u32;
+            if num > maxval {
+                return Err(anyhow!("pixel value exceeding maxval specified"));
+            } else {
+                num < halfie
+            }
+        })
+    };
+    Ok(Bitmap {
+        width,
+        height,
+        words_per_row,
+        words,
+    })
+}
+
+/// Binary PPM
+fn read_p6(reader: &mut impl BufRead) -> anyhow::Result<Bitmap> {
+    munch_mandatory_whitespace(reader)?;
+    let width = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let height = munch_number(reader)?;
+    munch_mandatory_whitespace(reader)?;
+    let maxval = munch_number(reader)?;
+    munch_one_whitespace(reader)?;
+    if maxval > 65535 {
+        return Err(anyhow!("maxval greater than 65535 specified"));
+    } else if maxval == 0 {
+        return Err(anyhow!("zero maxval specified"));
+    }
+    let maxval = maxval * 3;
+    let halfie = (maxval + 1) / 2;
+    let (words_per_row, words) = if maxval > 255 * 3 {
+        read_pixels!(width, height, {
+            let mut buf = [0; 6];
+            reader.read_exact(&mut buf)?;
+            let num = u16::from_be_bytes([buf[0], buf[1]]) as u32
+                + u16::from_be_bytes([buf[2], buf[3]]) as u32
+                + u16::from_be_bytes([buf[4], buf[5]]) as u32;
+            if num > maxval {
+                return Err(anyhow!("pixel value exceeding maxval specified"));
+            } else {
+                num < halfie
+            }
+        })
+    } else {
+        read_pixels!(width, height, {
+            let mut buf = [0; 3];
+            reader.read_exact(&mut buf)?;
+            let num = buf[0] as u32 + buf[1] as u32 + buf[2] as u32;
+            if num > maxval {
+                return Err(anyhow!("pixel value exceeding maxval specified"));
+            } else {
+                num < halfie
+            }
+        })
+    };
+    Ok(Bitmap {
+        width,
+        height,
+        words_per_row,
+        words,
     })
 }
