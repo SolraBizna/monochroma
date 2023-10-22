@@ -48,7 +48,7 @@ impl Bitmap {
     pub fn from_bytes(width: u32, height: u32, bytes: &[u8]) -> Bitmap {
         let src_pitch = (width + 7) / 8;
         if bytes.len() != (src_pitch as usize * height as usize) {
-            panic!("Bitmap::from_bytes(): input slice not exactly the right nubmer of bytes");
+            panic!("Bitmap::from_bytes(): input slice not exactly the right number of bytes");
         }
         let pitch_words = get_word_pitch(width);
         let mut bits = Vec::with_capacity((pitch_words * height) as usize);
