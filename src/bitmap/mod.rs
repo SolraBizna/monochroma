@@ -1,9 +1,16 @@
 use super::*;
 
 mod draw;
-mod pbm;
 
 pub use draw::*;
+
+#[cfg(feature = "font")]
+mod font;
+#[cfg(feature = "font")]
+pub use font::*;
+
+#[cfg(feature = "netpbm")]
+mod netpbm;
 
 /// A "word" within a 1-bit image. In the current version, this is a `u32`
 /// containing 32 pixels. The most significant bit is the leftmost pixel, the
@@ -68,6 +75,37 @@ impl Bitmap {
             pitch_words,
             bits,
         }
+    }
+    /// Turn this bitmap into an array of byte pixels, most significant bit on
+    /// the left. (If you are saving this into a Macintosh-originated format,
+    /// be aware that *you* may have to pad the rows to a multiple of 2
+    /// bytes.)
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // This function isn't terribly efficient, but it is easy to understand.
+        let out_rowbytes = ((self.width + 7) / 8) as usize;
+        let mut ret = Vec::with_capacity(out_rowbytes * self.height as usize);
+        for y in 0..self.height as usize {
+            let src_row = &self.bits[y * self.pitch_words as usize
+                ..(y + 1) * self.pitch_words as usize];
+            for (i, word) in src_row.iter().enumerate() {
+                let in_x = i * BITMAP_WORD_BITS;
+                let in_bytes = word.to_be_bytes();
+                ret.push(in_bytes[0]);
+                if in_x + 8 >= self.width as usize {
+                    break;
+                }
+                ret.push(in_bytes[1]);
+                if in_x + 16 >= self.width as usize {
+                    break;
+                }
+                ret.push(in_bytes[2]);
+                if in_x + 24 >= self.width as usize {
+                    break;
+                }
+                ret.push(in_bytes[3]);
+            }
+        }
+        ret
     }
     pub fn get_width(&self) -> u32 {
         self.width

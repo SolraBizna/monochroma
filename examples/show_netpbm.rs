@@ -4,15 +4,18 @@ fn main() {
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
     let mut event_pump = sdl.event_pump().unwrap();
+    let bits: Bitmap =
+        Bitmap::read_netpbm(std::io::stdin()).expect("Couldn't load bitmap.");
     let mut display = Display::new(&video, || {
-        let mut ret = video.window("Bitmap Display", 640, 512);
+        let mut ret = video.window(
+            "Bitmap Display",
+            bits.get_width(),
+            bits.get_height(),
+        );
         ret.resizable();
-        //ret.fullscreen();
         ret
     })
     .unwrap();
-    let bits: Bitmap =
-        Bitmap::from_pbm(std::io::stdin()).expect("Couldn't load bitmap.");
     for event in event_pump.wait_iter() {
         use sdl2::event::Event;
         match event {

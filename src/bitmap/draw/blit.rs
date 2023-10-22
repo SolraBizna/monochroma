@@ -35,10 +35,10 @@ impl Bitmap {
             dst_y -= src_rect.top;
             src_rect.top = 0;
         }
-        if dst_x >= clip_rect.get_width() as i32 {
+        if dst_x >= clip_rect.right {
             return;
         }
-        if dst_y >= clip_rect.get_height() as i32 {
+        if dst_y >= clip_rect.bottom {
             return;
         }
         let mut src_rect = src_rect.intersection(src.get_bounds());
@@ -63,7 +63,8 @@ impl Bitmap {
         let dst_left = dst_x as u32;
         let dst_top = dst_y as u32;
         let dst_right = dst_left + src_rect.get_width();
-        let dst_bottom = dst_top + src_rect.get_height();
+        let dst_bottom =
+            (dst_top + src_rect.get_height()).min(clip_rect.bottom as u32);
         let (in_start_word, in_stop_word, _, _) =
             calculate_span_mask(src_left, src_right);
         let in_word_count = (in_stop_word + 1) - in_start_word;
@@ -157,7 +158,6 @@ fn inner_blit<Mode: TransferMode>(
                 ) & combined_mask);
             i += dst.pitch_words as usize;
         }
-        debug_assert!(src_rows.next().is_none())
     } else {
         let out_stride =
             (dst.pitch_words - (out_stop_word - out_start_word)) as usize;
@@ -185,7 +185,6 @@ fn inner_blit<Mode: TransferMode>(
                 ) & right_mask);
             i += out_stride;
         }
-        debug_assert!(src_rows.next().is_none())
     }
 }
 
