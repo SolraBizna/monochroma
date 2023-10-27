@@ -24,22 +24,32 @@ impl Rectangle {
     /// rectangles. The result will be an empty rectangle if there is no
     /// overlap.
     pub fn intersection(&self, rhs: Rectangle) -> Rectangle {
-        Rectangle {
-            left: self.left.max(rhs.left),
-            top: self.top.max(rhs.top),
-            right: self.right.min(rhs.right),
-            bottom: self.bottom.min(rhs.bottom),
+        if self.is_empty() || rhs.is_empty() {
+            Rectangle::default()
+        } else {
+            Rectangle {
+                left: self.left.max(rhs.left),
+                top: self.top.max(rhs.top),
+                right: self.right.min(rhs.right),
+                bottom: self.bottom.min(rhs.bottom),
+            }
         }
     }
     /// Returns the smallest rectangle that contains both of the source
     /// rectangles. (It will likely also contain some pixels that are outside
     /// of either rectangle.)
     pub fn union(&self, rhs: Rectangle) -> Rectangle {
-        Rectangle {
-            left: self.left.min(rhs.left),
-            top: self.top.min(rhs.top),
-            right: self.right.max(rhs.right),
-            bottom: self.bottom.max(rhs.bottom),
+        if self.is_empty() {
+            rhs
+        } else if rhs.is_empty() {
+            *self
+        } else {
+            Rectangle {
+                left: self.left.min(rhs.left),
+                top: self.top.min(rhs.top),
+                right: self.right.max(rhs.right),
+                bottom: self.bottom.max(rhs.bottom),
+            }
         }
     }
     /// Returns true if this rectangle doesn't contain anything (width or
