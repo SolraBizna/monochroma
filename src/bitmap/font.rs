@@ -408,6 +408,77 @@ impl Font {
             glyph_offsetwidths: new_glyph_offsetwidths,
         }
     }
+    /// Measure text, as though drawn with `Bitmap::draw_text` but without
+    /// doing any drawing.
+    pub fn measure_text<'a>(
+        mut pen_x: i32,
+        mut pen_y: i32,
+        mut fonts: &'a [&'a Font],
+        elements: impl Iterator<Item = TextElement<'a>>,
+    ) -> TextMeasurements {
+        if fonts.is_empty() {
+            panic!("measure_text given an empty slice of fonts!");
+        }
+        let pen_start = (pen_x, pen_y);
+        let mut drawn_rectangle = Rectangle::default();
+        for element in elements {
+            match element {
+                TextElement::DrawGlyph(glyph) => {
+                    let (font, rect, offset, advance, _present) =
+                        lookup_glyph(fonts, glyph);
+                    let (draw_x, draw_y) =
+                        (pen_x + offset, pen_y - font.get_ascent());
+                    drawn_rectangle = drawn_rectangle.union(Rectangle {
+                        left: draw_x,
+                        right: draw_x + rect.get_width() as i32,
+                        top: draw_y,
+                        bottom: draw_y + rect.get_height() as i32,
+                    });
+                    pen_x += advance;
+                }
+                TextElement::ChangeFonts(new_fonts) => {
+                    if new_fonts.is_empty() {
+                        panic!("measure_text given an empty slice of fonts!");
+                    }
+                    fonts = new_fonts;
+                }
+                TextElement::MovePen(new_x, new_y) => {
+                    (pen_x, pen_y) = (new_x, new_y);
+                }
+                TextElement::AdvancePen(advance) => {
+                    pen_x = pen_x.saturating_add(advance);
+                }
+            }
+        }
+        TextMeasurements {
+            drawn_rectangle,
+            pen_start,
+            pen_end: (pen_x, pen_y),
+        }
+    }
+    /// Measure a single glyph. You can use this function to somewhat
+    /// inefficiently implement `measure_text`, but it is more useful when
+    /// building data structures related to rendering, selection, editing...
+    pub fn measure_glyph<'a>(
+        fonts: &'a [&'a Font],
+        glyph: u16,
+    ) -> GlyphMeasurement {
+        if fonts.is_empty() {
+            panic!("measure_glyph given an empty slice of fonts!");
+        }
+        let (font, rect, offset, advance, present) =
+            lookup_glyph(fonts, glyph);
+        GlyphMeasurement {
+            drawn_rectangle: Rectangle {
+                left: offset,
+                right: offset + rect.get_width() as i32,
+                top: -font.get_ascent(),
+                bottom: -font.get_ascent() + rect.get_height() as i32,
+            },
+            advance,
+            present,
+        }
+    }
 }
 
 /// Commands for `draw_text`.
@@ -465,30 +536,8 @@ impl Bitmap {
         for element in elements {
             match element {
                 TextElement::DrawGlyph(glyph) => {
-                    let (
-                        mut font,
-                        (mut rect, mut offset, mut advance, mut present),
-                    ) = (fonts[0], fonts[0].get_glyph(glyph));
-                    if !present {
-                        let (missing_rect, missing_offset, missing_advance) =
-                            (rect, offset, advance);
-                        for candidate in fonts[1..].iter() {
-                            (font, (rect, offset, advance, present)) =
-                                (candidate, candidate.get_glyph(glyph));
-                            if present {
-                                break;
-                            }
-                        }
-                        if !present {
-                            // use the missing glyph from the first font if
-                            // none had it
-                            (rect, offset, advance) = (
-                                missing_rect,
-                                missing_offset,
-                                missing_advance,
-                            );
-                        }
-                    }
+                    let (font, rect, offset, advance, _present) =
+                        lookup_glyph(fonts, glyph);
                     let (draw_x, draw_y) =
                         (pen_x + offset, pen_y - font.get_ascent());
                     self.blit_bits(
@@ -517,4 +566,45 @@ impl Bitmap {
         }
         (pen_x, pen_y)
     }
+}
+
+pub struct TextMeasurements {
+    pub drawn_rectangle: Rectangle,
+    pub pen_start: (i32, i32),
+    pub pen_end: (i32, i32),
+}
+
+pub struct GlyphMeasurement {
+    /// The rectangle of touched bits, where (0, 0) is the pen location.
+    pub drawn_rectangle: Rectangle,
+    /// The amount to add to the pen X coordinate after drawing.
+    pub advance: i32,
+    /// True if the glyph was found, false if this is a fallback glyph.
+    pub present: bool,
+}
+
+fn lookup_glyph<'a>(
+    fonts: &'a [&'a Font],
+    glyph: u16,
+) -> (&'a Font, Rectangle, i32, i32, bool) {
+    let (mut font, (mut rect, mut offset, mut advance, mut present)) =
+        (fonts[0], fonts[0].get_glyph(glyph));
+    if !present {
+        let (missing_rect, missing_offset, missing_advance) =
+            (rect, offset, advance);
+        for candidate in fonts[1..].iter() {
+            (font, (rect, offset, advance, present)) =
+                (candidate, candidate.get_glyph(glyph));
+            if present {
+                break;
+            }
+        }
+        if !present {
+            // use the missing glyph from the first font if
+            // none had it
+            (rect, offset, advance) =
+                (missing_rect, missing_offset, missing_advance);
+        }
+    }
+    (font, rect, offset, advance, present)
 }
