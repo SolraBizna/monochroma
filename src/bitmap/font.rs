@@ -4,6 +4,7 @@ use std::{
     fmt::{Debug, Formatter, Result as FmtResult},
     io::Read,
     ops::RangeInclusive,
+    sync::OnceLock,
 };
 
 use anyhow::{anyhow, Context};
@@ -23,6 +24,8 @@ pub struct Font {
     glyph_locations: Vec<u16>,
     /// Offsets and advances of glyphs
     glyph_offsetwidths: Vec<(i8, u8)>,
+    /// Cached width of space character
+    space_width: OnceLock<u8>,
 }
 
 impl Font {
@@ -85,6 +88,7 @@ impl Font {
             leading,
             glyph_locations,
             glyph_offsetwidths,
+            space_width: OnceLock::new(),
         })
     }
     /// Get the number of pixels that are above the baseline.
@@ -114,7 +118,7 @@ impl Font {
     ///   character should begin.
     /// - True if the glyph actually exists in the font. (If false, the
     ///   returned information is for the fallback glyph.)
-    pub fn get_glyph(&self, glyph_id: u16) -> (Rectangle, i32, i32, bool) {
+    pub fn get_glyph(&self, glyph_id: u16) -> (Rectangle, i32, u32, bool) {
         let (glyph_index, present);
         if self.glyph_range.contains(&glyph_id) {
             glyph_index = (glyph_id - self.glyph_range.start()) as usize;
@@ -137,7 +141,7 @@ impl Font {
                 bottom: self.bitmap.get_height() as i32,
             },
             offset as i32,
-            advance as i32,
+            advance as u32,
             present,
         )
     }
@@ -207,6 +211,7 @@ impl Font {
                 .iter()
                 .map(|(offset, advance)| (*offset, advance.saturating_add(1)))
                 .collect(),
+            space_width: OnceLock::new(),
         }
     }
     /// Makes a version of this font that is italic. (If it is also to be made
@@ -268,6 +273,7 @@ impl Font {
             leading: self.leading,
             glyph_locations: new_glyph_locations,
             glyph_offsetwidths: self.glyph_offsetwidths.clone(),
+            space_width: OnceLock::new(),
         }
     }
     /// Makes a version of this font that is underlined. (If it is also to be
@@ -406,6 +412,7 @@ impl Font {
             leading: self.leading,
             glyph_locations: new_glyph_locations,
             glyph_offsetwidths: new_glyph_offsetwidths,
+            space_width: OnceLock::new(),
         }
     }
     /// Measure text, as though drawn with `Bitmap::draw_text` but without
@@ -434,7 +441,7 @@ impl Font {
                         top: draw_y,
                         bottom: draw_y + rect.get_height() as i32,
                     });
-                    pen_x += advance;
+                    pen_x += advance as i32;
                 }
                 TextElement::ChangeFonts(new_fonts) => {
                     if new_fonts.is_empty() {
@@ -477,6 +484,22 @@ impl Font {
             },
             advance,
             present,
+        }
+    }
+    /// Returns the "advance" measurement for the space glyph. This is the only
+    /// part of this code that assumes a particular glyph has a particular
+    /// purpose. It assumes the space glyph is glyph 0x20 (ASCII space). You
+    /// could obtain this value yourself by calling `measure_glyph`, but this
+    /// value is often needed if it's needed at all, and this method caches the
+    /// value after the first call.
+    pub fn get_space_width(&self) -> u32 {
+        if let Some(space_width) = self.space_width.get() {
+            *space_width as u32
+        } else {
+            let ret = Font::measure_glyph(&[self], 0x20).advance;
+            // It's harmless if we attempt to set it more than once.
+            let _ = self.space_width.set(ret.try_into().expect("Internal error: advance no longer fits into a u8, this part of get_space_width needs to be updated!"));
+            ret as u32
         }
     }
 }
@@ -548,7 +571,7 @@ impl Bitmap {
                         draw_x,
                         draw_y,
                     );
-                    pen_x += advance;
+                    pen_x += advance as i32;
                 }
                 TextElement::ChangeFonts(new_fonts) => {
                     if new_fonts.is_empty() {
@@ -578,7 +601,7 @@ pub struct GlyphMeasurement {
     /// The rectangle of touched bits, where (0, 0) is the pen location.
     pub drawn_rectangle: Rectangle,
     /// The amount to add to the pen X coordinate after drawing.
-    pub advance: i32,
+    pub advance: u32,
     /// True if the glyph was found, false if this is a fallback glyph.
     pub present: bool,
 }
@@ -586,7 +609,7 @@ pub struct GlyphMeasurement {
 fn lookup_glyph<'a>(
     fonts: &'a [&'a Font],
     glyph: u16,
-) -> (&'a Font, Rectangle, i32, i32, bool) {
+) -> (&'a Font, Rectangle, i32, u32, bool) {
     let (mut font, (mut rect, mut offset, mut advance, mut present)) =
         (fonts[0], fonts[0].get_glyph(glyph));
     if !present {
