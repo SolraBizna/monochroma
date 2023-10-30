@@ -10,8 +10,11 @@ anyhow = "1.0.75"
 backtrace = {version = "0.3.69", optional = true}
 libc = {version = "0.2.149", optional = true}
 log = {version = "0.4.20", optional = true}
-sdl2 = {version = "0.35.2", optional = true}
-sdl2-sys = {version = "0.35.2", optional = true}
+#sdl2 = {version = "0.35.2", optional = true}
+#sdl2-sys = {version = "0.35.2", optional = true}
+# precise_y is not exposed in 0.35.2, will be in next version
+sdl2 = {git="https://github.com/rust-sdl2/rust-sdl2.git", rev="1b68845", optional=true}
+sdl2-sys = {git="https://github.com/rust-sdl2/rust-sdl2.git", rev="1b68845", optional=true}
 
 [features]
 default = []
