@@ -124,7 +124,7 @@ impl Font {
             glyph_index = (glyph_id - self.glyph_range.start()) as usize;
             present = true;
         } else {
-            glyph_index = self.glyph_range.clone().count() + 1;
+            glyph_index = self.glyph_range.clone().count();
             present = false;
         };
         let (offset, advance) = self.glyph_offsetwidths[glyph_index];
