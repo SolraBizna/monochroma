@@ -48,12 +48,13 @@ fn main() {
             + (font.get_ascent() + font.get_descent() + font.get_leading())
                 * n as i32
             + font.get_ascent();
+        let fonts = [*font];
         bits.draw_text(
             ModeXor(()),
             None,
             16,
             y,
-            &[*font],
+            |n| fonts.get(n).copied(),
             text.chars().map(|c| {
                 if c > '\u{0080}' {
                     panic!("Non-ASCII character in argument text!")

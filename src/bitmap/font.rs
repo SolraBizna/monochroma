@@ -1,11 +1,6 @@
 use super::*;
 
-use std::{
-    fmt::{Debug, Formatter, Result as FmtResult},
-    io::Read,
-    ops::RangeInclusive,
-    sync::OnceLock,
-};
+use std::{io::Read, ops::RangeInclusive, sync::OnceLock};
 
 use anyhow::{anyhow, Context};
 
@@ -420,19 +415,16 @@ impl Font {
     pub fn measure_text<'a>(
         mut pen_x: i32,
         mut pen_y: i32,
-        mut fonts: &'a [&'a Font],
-        elements: impl Iterator<Item = TextElement<'a>>,
+        fonts: impl Fn(usize) -> Option<&'a Font>,
+        elements: impl Iterator<Item = TextElement>,
     ) -> TextMeasurements {
-        if fonts.is_empty() {
-            panic!("measure_text given an empty slice of fonts!");
-        }
         let pen_start = (pen_x, pen_y);
         let mut drawn_rectangle = Rectangle::default();
         for element in elements {
             match element {
                 TextElement::DrawGlyph(glyph) => {
                     let (font, rect, offset, advance, _present) =
-                        lookup_glyph(fonts, glyph);
+                        lookup_glyph(&fonts, glyph);
                     let (draw_x, draw_y) =
                         (pen_x + offset, pen_y - font.get_ascent());
                     drawn_rectangle = drawn_rectangle.union(Rectangle {
@@ -442,12 +434,6 @@ impl Font {
                         bottom: draw_y + rect.get_height() as i32,
                     });
                     pen_x += advance as i32;
-                }
-                TextElement::ChangeFonts(new_fonts) => {
-                    if new_fonts.is_empty() {
-                        panic!("measure_text given an empty slice of fonts!");
-                    }
-                    fonts = new_fonts;
                 }
                 TextElement::MovePen(new_x, new_y) => {
                     (pen_x, pen_y) = (new_x, new_y);
@@ -467,12 +453,9 @@ impl Font {
     /// inefficiently implement `measure_text`, but it is more useful when
     /// building data structures related to rendering, selection, editing...
     pub fn measure_glyph<'a>(
-        fonts: &'a [&'a Font],
+        fonts: impl Fn(usize) -> Option<&'a Font>,
         glyph: u16,
     ) -> GlyphMeasurement {
-        if fonts.is_empty() {
-            panic!("measure_glyph given an empty slice of fonts!");
-        }
         let (font, rect, offset, advance, present) =
             lookup_glyph(fonts, glyph);
         GlyphMeasurement {
@@ -496,7 +479,8 @@ impl Font {
         if let Some(space_width) = self.space_width.get() {
             *space_width as u32
         } else {
-            let ret = Font::measure_glyph(&[self], 0x20).advance;
+            let ret =
+                Font::measure_glyph(|n| [self].get(n).copied(), 0x20).advance;
             // It's harmless if we attempt to set it more than once.
             let _ = self.space_width.set(ret.try_into().expect("Internal error: advance no longer fits into a u8, this part of get_space_width needs to be updated!"));
             ret as u32
@@ -504,9 +488,9 @@ impl Font {
     }
 }
 
-/// Commands for `draw_text`.
-#[derive(Clone)]
-pub enum TextElement<'a> {
+/// Commands for `draw_text` and `measure_text`.
+#[derive(Clone, Debug)]
+pub enum TextElement {
     /// Draw the given glyph at the current pen coordinates, and advance the
     /// pen by the appropriate amount.
     ///
@@ -514,33 +498,11 @@ pub enum TextElement<'a> {
     /// 0xFFFF is guaranteed never to be present in an NFNT, so you can use it
     /// to display a non-encodable character.
     DrawGlyph(u16),
-    /// Change the active set of fonts. (Because the point size, font, or style
-    /// changed mid-text.)
-    ChangeFonts(&'a [&'a Font]),
     /// Move the pen to the given absolute coordinates.
     MovePen(i32, i32),
     /// Advance the pen by the given number of pixels, as if we rendered a
     /// glyph with this amount of advance.
     AdvancePen(i32),
-}
-
-impl Debug for TextElement<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        match self {
-            Self::DrawGlyph(glyph) => {
-                f.debug_tuple("DrawGlyph").field(glyph).finish()
-            }
-            Self::ChangeFonts(fonts) => {
-                write!(f, "ChangeFonts(&[Nfnt; {}])", fonts.len())
-            }
-            Self::MovePen(x, y) => {
-                f.debug_tuple("MovePen").field(x).field(y).finish()
-            }
-            Self::AdvancePen(advance) => {
-                f.debug_tuple("AdvancePen").field(advance).finish()
-            }
-        }
-    }
 }
 
 impl Bitmap {
@@ -550,17 +512,14 @@ impl Bitmap {
         clip_rect: Option<Rectangle>,
         mut pen_x: i32,
         mut pen_y: i32,
-        mut fonts: &'a [&'a Font],
-        elements: impl Iterator<Item = TextElement<'a>>,
+        fonts: impl Fn(usize) -> Option<&'a Font>,
+        elements: impl Iterator<Item = TextElement>,
     ) -> (i32, i32) {
-        if fonts.is_empty() {
-            panic!("draw_text given an empty slice of fonts!");
-        }
         for element in elements {
             match element {
                 TextElement::DrawGlyph(glyph) => {
                     let (font, rect, offset, advance, _present) =
-                        lookup_glyph(fonts, glyph);
+                        lookup_glyph(&fonts, glyph);
                     let (draw_x, draw_y) =
                         (pen_x + offset, pen_y - font.get_ascent());
                     self.blit_bits(
@@ -572,12 +531,6 @@ impl Bitmap {
                         draw_y,
                     );
                     pen_x += advance as i32;
-                }
-                TextElement::ChangeFonts(new_fonts) => {
-                    if new_fonts.is_empty() {
-                        panic!("draw_text given an empty slice of fonts!");
-                    }
-                    fonts = new_fonts;
                 }
                 TextElement::MovePen(new_x, new_y) => {
                     (pen_x, pen_y) = (new_x, new_y);
@@ -607,15 +560,17 @@ pub struct GlyphMeasurement {
 }
 
 fn lookup_glyph<'a>(
-    fonts: &'a [&'a Font],
+    fonts: impl Fn(usize) -> Option<&'a Font>,
     glyph: u16,
 ) -> (&'a Font, Rectangle, i32, u32, bool) {
+    let first_font = fonts(0).expect("At least one font must be provided!");
     let (mut font, (mut rect, mut offset, mut advance, mut present)) =
-        (fonts[0], fonts[0].get_glyph(glyph));
+        (first_font, first_font.get_glyph(glyph));
     if !present {
         let (missing_rect, missing_offset, missing_advance) =
             (rect, offset, advance);
-        for candidate in fonts[1..].iter() {
+        for n in 1.. {
+            let Some(candidate) = fonts(n) else { break };
             (font, (rect, offset, advance, present)) =
                 (candidate, candidate.get_glyph(glyph));
             if present {
