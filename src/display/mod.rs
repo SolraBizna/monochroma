@@ -11,7 +11,9 @@ mod glerr;
 
 use super::*;
 
-const FRAGMENT_SHADER_SOURCE: &[u8] = include_bytes!("fragment.glsl");
+const FRAGMENT_POINT_SHADER_SOURCE: &[u8] =
+    include_bytes!("fragment_point.glsl");
+const FRAGMENT_BOX_SHADER_SOURCE: &[u8] = include_bytes!("fragment_box.glsl");
 const VERTEX_SHADER_SOURCE: &[u8] = include_bytes!("vertex.glsl");
 
 /// A simulated framebuffer display.
@@ -20,7 +22,8 @@ pub struct Display {
     gl_context: sdl2::video::GLContext,
     gl: Procs,
     screen_texture: GLuint,
-    program: GLuint,
+    program_point: GLuint,
+    program_box: GLuint,
 }
 
 impl Display {
@@ -64,7 +67,8 @@ impl Display {
             }
         })?;
         let mut screen_texture = 0;
-        let program;
+        let program_point;
+        let program_box;
         // unsafe justification: all OpenGL interfacing is unsafe :(
         unsafe {
             // do fancy debug output if we can
@@ -100,11 +104,17 @@ impl Display {
                 GL_TEXTURE_MAG_FILTER,
                 GL_NEAREST as GLint,
             );
-            let shader_fragment = compile_shader(
+            let shader_fragment_point = compile_shader(
                 &gl,
-                "fragment shader",
+                "point fragment shader",
                 GL_FRAGMENT_SHADER,
-                &[FRAGMENT_SHADER_SOURCE],
+                &[FRAGMENT_POINT_SHADER_SOURCE],
+            )?;
+            let shader_fragment_box = compile_shader(
+                &gl,
+                "box fragment shader",
+                GL_FRAGMENT_SHADER,
+                &[FRAGMENT_BOX_SHADER_SOURCE],
             )?;
             let shader_vertex = compile_shader(
                 &gl,
@@ -112,45 +122,55 @@ impl Display {
                 GL_VERTEX_SHADER,
                 &[VERTEX_SHADER_SOURCE],
             )?;
-            program = link_program(
+            program_point = link_program(
                 &gl,
-                "the one, the only",
-                &[shader_fragment, shader_vertex],
+                "the point shader",
+                &[shader_fragment_point, shader_vertex],
             )?;
-            gl.UseProgram(program);
-            let mut vao = 0;
-            gl.GenVertexArrays(1, &mut vao);
-            gl.BindVertexArray(vao);
-            let mut vbo = 0;
-            gl.GenBuffers(1, &mut vbo);
-            gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
-            setup_attribs(
+            program_box = link_program(
                 &gl,
-                program,
-                "the one, the only",
-                &[
-                    (b"pos\0", &|gl, loc| {
-                        gl.VertexAttribPointer(
-                            loc,
-                            2,
-                            GL_FLOAT,
-                            0,
-                            16,
-                            std::ptr::null(),
-                        )
-                    }),
-                    (b"vert_uv\0", &|gl, loc| {
-                        gl.VertexAttribPointer(
-                            loc,
-                            2,
-                            GL_FLOAT,
-                            0,
-                            16,
-                            8usize as *const libc::c_void,
-                        )
-                    }),
-                ],
-            );
+                "the box shader",
+                &[shader_fragment_box, shader_vertex],
+            )?;
+            for (program, name) in [
+                (program_point, "the point program"),
+                (program_box, "the box program"),
+            ] {
+                gl.UseProgram(program);
+                let mut vao = 0;
+                gl.GenVertexArrays(1, &mut vao);
+                gl.BindVertexArray(vao);
+                let mut vbo = 0;
+                gl.GenBuffers(1, &mut vbo);
+                gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
+                setup_attribs(
+                    &gl,
+                    program,
+                    name,
+                    &[
+                        (b"pos\0", &|gl, loc| {
+                            gl.VertexAttribPointer(
+                                loc,
+                                2,
+                                GL_FLOAT,
+                                0,
+                                16,
+                                std::ptr::null(),
+                            )
+                        }),
+                        (b"vert_uv\0", &|gl, loc| {
+                            gl.VertexAttribPointer(
+                                loc,
+                                2,
+                                GL_FLOAT,
+                                0,
+                                16,
+                                8usize as *const libc::c_void,
+                            )
+                        }),
+                    ],
+                );
+            }
             assertgl(&gl, "while initializing GL state");
         }
         Ok(Display {
@@ -158,7 +178,8 @@ impl Display {
             gl,
             gl_context,
             screen_texture,
-            program,
+            program_point,
+            program_box,
         })
     }
     pub fn update(
@@ -190,7 +211,7 @@ impl Display {
         let window_height = window_height as f32 * pixel_aspect_ratio;
         let bitmap_width = bits.width as f32;
         let bitmap_height = bits.height as f32;
-        let (x_margins, y_margins, _scale_factor) = calculate_mapping(
+        let (x_margins, y_margins, scale_factor) = calculate_mapping(
             window_width,
             window_height,
             bitmap_width,
@@ -234,9 +255,14 @@ impl Display {
                 &buffer[0] as *const f32 as *const GLvoid,
                 GL_STREAM_DRAW,
             );
+            let program = if scale_factor.floor() == scale_factor {
+                self.program_point
+            } else {
+                self.program_box
+            };
             setup_uniforms(
                 &self.gl,
-                self.program,
+                program,
                 "the one, the only",
                 &[
                     (b"bits\0", &|gl, loc| gl.Uniform1i(loc, 0)),
