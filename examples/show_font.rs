@@ -18,6 +18,7 @@ fn main() {
     let width = height * 2;
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
+    video.enable_screen_saver();
     let mut event_pump = sdl.event_pump().unwrap();
     let mut display = Display::new(&video, || {
         let mut ret = video.window("Bitmap Display", width, height);

@@ -3,6 +3,7 @@ use monochroma::*;
 fn main() {
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
+    video.enable_screen_saver();
     let mut event_pump = sdl.event_pump().unwrap();
     let bits: Bitmap =
         Bitmap::read_netpbm(std::io::stdin()).expect("Couldn't load bitmap");

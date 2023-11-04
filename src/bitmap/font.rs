@@ -410,52 +410,9 @@ impl Font {
             space_width: OnceLock::new(),
         }
     }
-    /// Measure text, as though drawn with `Bitmap::draw_text` but without
-    /// doing any drawing.
-    pub fn measure_text<'a>(
-        mut pen_x: i32,
-        mut pen_y: i32,
-        fonts: impl Fn(usize) -> Option<&'a Font>,
-        elements: impl Iterator<Item = TextElement>,
-    ) -> TextMeasurements {
-        let pen_start = (pen_x, pen_y);
-        let mut drawn_rectangle = Rectangle::default();
-        for element in elements {
-            match element {
-                TextElement::DrawGlyph(glyph) => {
-                    let (font, rect, offset, advance, _present) =
-                        lookup_glyph(&fonts, glyph);
-                    let (draw_x, draw_y) =
-                        (pen_x + offset, pen_y - font.get_ascent());
-                    drawn_rectangle = drawn_rectangle.union(Rectangle {
-                        left: draw_x,
-                        right: draw_x + rect.get_width() as i32,
-                        top: draw_y,
-                        bottom: draw_y + rect.get_height() as i32,
-                    });
-                    pen_x += advance as i32;
-                }
-                TextElement::MovePen(new_x, new_y) => {
-                    (pen_x, pen_y) = (new_x, new_y);
-                }
-                TextElement::AdvancePen(advance) => {
-                    pen_x = pen_x.saturating_add(advance);
-                }
-            }
-        }
-        TextMeasurements {
-            drawn_rectangle,
-            pen_start,
-            pen_end: (pen_x, pen_y),
-        }
-    }
-    /// Measure a single glyph. You can use this function to somewhat
-    /// inefficiently implement `measure_text`, but it is more useful when
-    /// building data structures related to rendering, selection, editing...
-    pub fn measure_glyph<'a>(
-        fonts: impl Fn(usize) -> Option<&'a Font>,
-        glyph: u16,
-    ) -> GlyphMeasurement {
+    /// Measure a single glyph from the first font that contains it, or the
+    /// "missing character" glyph if none do.
+    pub fn measure_glyph(fonts: &[&Font], glyph: u16) -> GlyphMeasurement {
         let (font, rect, offset, advance, present) =
             lookup_glyph(fonts, glyph);
         GlyphMeasurement {
@@ -479,8 +436,7 @@ impl Font {
         if let Some(space_width) = self.space_width.get() {
             *space_width as u32
         } else {
-            let ret =
-                Font::measure_glyph(|n| [self].get(n).copied(), 0x20).advance;
+            let ret = Font::measure_glyph(&[self], 0x20).advance;
             // It's harmless if we attempt to set it more than once.
             let _ = self.space_width.set(ret.try_into().expect("Internal error: advance no longer fits into a u8, this part of get_space_width needs to be updated!"));
             ret as u32
@@ -488,59 +444,41 @@ impl Font {
     }
 }
 
-/// Commands for `draw_text` and `measure_text`.
-#[derive(Clone, Debug)]
-pub enum TextElement {
-    /// Draw the given glyph at the current pen coordinates, and advance the
-    /// pen by the appropriate amount.
-    ///
-    /// Glyphs are given as code points in whatever encoding your font expects.
-    /// 0xFFFF is guaranteed never to be present in an NFNT, so you can use it
-    /// to display a non-encodable character.
-    DrawGlyph(u16),
-    /// Move the pen to the given absolute coordinates.
-    MovePen(i32, i32),
-    /// Advance the pen by the given number of pixels, as if we rendered a
-    /// glyph with this amount of advance.
-    AdvancePen(i32),
-}
-
 impl Bitmap {
-    pub fn draw_text<'a, Mode: TransferMode>(
+    /// Render the given glyph from the first font that contains it, or the
+    /// missing glyph from the first font, at the given pen position. Returns
+    /// the measurements of the glyph. You should advance the pen X by
+    /// `measurements.advance` at the very least.
+    pub fn draw_glyph<Mode: TransferMode>(
         &mut self,
         mode: Mode,
         clip_rect: Option<Rectangle>,
-        mut pen_x: i32,
-        mut pen_y: i32,
-        fonts: impl Fn(usize) -> Option<&'a Font>,
-        elements: impl Iterator<Item = TextElement>,
-    ) -> (i32, i32) {
-        for element in elements {
-            match element {
-                TextElement::DrawGlyph(glyph) => {
-                    let (font, rect, offset, advance, _present) =
-                        lookup_glyph(&fonts, glyph);
-                    let (draw_x, draw_y) =
-                        (pen_x + offset, pen_y - font.get_ascent());
-                    self.blit_bits(
-                        &mode,
-                        clip_rect,
-                        font.get_bitmap(),
-                        Some(rect),
-                        draw_x,
-                        draw_y,
-                    );
-                    pen_x += advance as i32;
-                }
-                TextElement::MovePen(new_x, new_y) => {
-                    (pen_x, pen_y) = (new_x, new_y);
-                }
-                TextElement::AdvancePen(advance) => {
-                    pen_x = pen_x.saturating_add(advance);
-                }
-            }
+        pen_x: i32,
+        pen_y: i32,
+        fonts: &[&Font],
+        glyph: u16,
+    ) -> GlyphMeasurement {
+        let (font, rect, offset, advance, present) =
+            lookup_glyph(fonts, glyph);
+        let (draw_x, draw_y) = (pen_x + offset, pen_y - font.get_ascent());
+        self.blit_bits(
+            &mode,
+            clip_rect,
+            font.get_bitmap(),
+            Some(rect),
+            draw_x,
+            draw_y,
+        );
+        GlyphMeasurement {
+            drawn_rectangle: Rectangle {
+                left: pen_x + offset,
+                right: pen_x + offset + rect.get_width() as i32,
+                top: pen_y - font.get_ascent(),
+                bottom: pen_y + font.get_descent(),
+            },
+            advance,
+            present,
         }
-        (pen_x, pen_y)
     }
 }
 
@@ -560,17 +498,17 @@ pub struct GlyphMeasurement {
 }
 
 fn lookup_glyph<'a>(
-    fonts: impl Fn(usize) -> Option<&'a Font>,
+    fonts: &[&'a Font],
     glyph: u16,
 ) -> (&'a Font, Rectangle, i32, u32, bool) {
-    let first_font = fonts(0).expect("At least one font must be provided!");
+    let first_font =
+        fonts.get(0).expect("At least one font must be provided!");
     let (mut font, (mut rect, mut offset, mut advance, mut present)) =
         (first_font, first_font.get_glyph(glyph));
     if !present {
         let (missing_rect, missing_offset, missing_advance) =
             (rect, offset, advance);
-        for n in 1.. {
-            let Some(candidate) = fonts(n) else { break };
+        for candidate in fonts[1..].iter() {
             (font, (rect, offset, advance, present)) =
                 (candidate, candidate.get_glyph(glyph));
             if present {
